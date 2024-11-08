@@ -25,6 +25,9 @@ func NewManagementApp() *ManagementApp {
 func (ma *ManagementApp) Initialize() {
 	apiService := services.NewAPIService()
 	ma.API = api.NewAPIController(apiService)
+
+	dsService := services.NewDownstreamService()
+	ma.DOWNStream = api.NewDownstreamController(dsService)
 	ma.Router = gin.Default()
 }
 
