@@ -1,2 +1,3 @@
-gateway.db
+*.db
 *.exe
+runtime

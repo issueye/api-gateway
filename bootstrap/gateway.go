@@ -1,18 +1,20 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"time"
 
 	"api-gateway/internal/api"
-	"api-gateway/internal/downstream"
-	"api-gateway/internal/global"
 	"api-gateway/internal/services"
-	"api-gateway/pkg/db"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/gin-gonic/gin"
@@ -20,11 +22,10 @@ import (
 
 // GatewayApp结构体用于网关转发相关的初始化和配置
 type GatewayApp struct {
-	Router     *gin.Engine
-	API        *api.APIController
-	Downstream *downstream.DownstreamServiceHandler
-	PebbleDB   *pebble.DB
-	// Logger     *utils.TrafficLogger
+	Router            *gin.Engine
+	API               *api.APIController
+	PebbleDB          *pebble.DB
+	downstreamService services.DownstreamServiceImpl
 }
 
 // NewGatewayApp创建并初始化用于网关转发的应用实例
@@ -35,24 +36,14 @@ func NewGatewayApp() *GatewayApp {
 // Initialize初始化网关转发应用的各种组件
 func (ga *GatewayApp) Initialize() {
 	var err error
-	global.DB, err = db.NewDB()
-	if err != nil {
-		fmt.Printf("Error initializing database: %v", err)
-		return
-	}
-
-	ga.PebbleDB, err = pebble.Open("", nil)
+	pebblePath := filepath.Join(DB_PATH, "pebble")
+	ga.PebbleDB, err = pebble.Open(pebblePath, nil)
 	if err != nil {
 		fmt.Printf("Error opening PebbleDB: %v", err)
 		return
 	}
 
-	downstreamService := services.NewDownstreamService()
-	ga.Downstream = downstream.NewDownstreamServiceHandler(downstreamService)
-
-	// trafficService := utils.NewTrafficService(global.DB)
-	// ga.Logger = utils.NewTrafficLogger(trafficService)
-
+	ga.downstreamService = services.NewDownstreamService()
 	ga.Router = gin.Default()
 	// ga.Router.Use(middleware.NewMiddleware().Wrap)
 }
@@ -65,15 +56,10 @@ func (ga *GatewayApp) SetupRoutes() {
 		parts := c.Param("path")
 		if len(parts) > 0 {
 			serviceName := parts[1:]
-			service, err := ga.Downstream.GetService(context.Background(), serviceName)
+			service, err := ga.downstreamService.GetByName(context.Background(), serviceName)
 			if err == nil && service.URL != "" {
 				backendURL, err := url.Parse(service.URL)
 				if err == nil {
-					apiInfo := fmt.Sprintf("Service: %s, URL: %s", serviceName, service.URL)
-					err = ga.storeAPIInfoInPebble(serviceName, apiInfo)
-					if err != nil {
-						fmt.Printf("Error storing API info in Pebble: %v", err)
-					}
 					// 创建一个自定义的转发器，这里可以根据需要调整转发逻辑
 					proxyClient := NewProxyClient(backendURL)
 					// 记录入栈流量
@@ -85,7 +71,12 @@ func (ga *GatewayApp) SetupRoutes() {
 				}
 			}
 		}
-		c.JSON(http.StatusNotFound, gin.H{"error": "Service not found"})
+		c.JSON(http.StatusOK, gin.H{"message": "Service not found"})
+	})
+
+	// 没有找到对应服务，返回404错误
+	ga.Router.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "404"})
 	})
 }
 
@@ -135,15 +126,53 @@ func NewProxyClient(targetURL *url.URL) *http.Client {
 	return &http.Client{Transport: transport}
 }
 
+type RequestInfo struct {
+	Method  string
+	URL     string
+	Headers map[string][]string
+	Body    []byte
+}
+
+type ResponseInfo struct {
+	Method     string
+	StatusCode int
+	Headers    map[string][]string
+	Body       []byte
+}
+
 // forwardRequest用于转发请求
 func (ga *GatewayApp) forwardRequest(c *gin.Context, client *http.Client) {
 	req := c.Request.Clone(c.Request.Context())
+	requestInfo, err := extractRequestInfo(req)
+	if err != nil {
+		log.Printf("Error extracting request info: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract request info"})
+		return
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to forward request"})
 		return
 	}
 	defer resp.Body.Close()
+
+	responseInfo, err := extractResponseInfo(resp, requestInfo.Method)
+	if err != nil {
+		log.Printf("Error extracting response info: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract response info"})
+		return
+	}
+
+	err = storeRequestInfo(ga, requestInfo)
+	if err != nil {
+		log.Printf("Error storing request info in Pebble: %v", err)
+	}
+
+	err = storeResponseInfo(ga, responseInfo)
+	if err != nil {
+		log.Printf("Error storing response info in Pebble: %v", err)
+	}
 
 	for k, vv := range resp.Header {
 		for _, v := range vv {
@@ -155,4 +184,58 @@ func (ga *GatewayApp) forwardRequest(c *gin.Context, client *http.Client) {
 	if err != nil {
 		fmt.Println("Error copying response body:", err)
 	}
+}
+
+// 从请求中提取请求信息，包括请求体
+func extractRequestInfo(req *http.Request) (RequestInfo, error) {
+	var requestBody []byte
+	if req.Body != nil {
+		reqBody, err := io.ReadAll(req.Body)
+		if err != nil {
+			return RequestInfo{}, err
+		}
+		requestBody = reqBody
+		req.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // 重置请求体，以便后续转发
+	}
+	return RequestInfo{
+		Method:  req.Method,
+		URL:     req.URL.String(),
+		Headers: req.Header,
+		Body:    requestBody,
+	}, nil
+}
+
+// 从响应中提取响应信息，包括响应体
+func extractResponseInfo(resp *http.Response, reqMethod string) (ResponseInfo, error) {
+	var responseBody []byte
+	if resp.Body != nil {
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return ResponseInfo{}, err
+		}
+		responseBody = respBody
+		resp.Body = io.NopCloser(bytes.NewBuffer(respBody)) // 重置响应体，以便后续处理
+	}
+	return ResponseInfo{
+		Method:     reqMethod,
+		StatusCode: resp.StatusCode,
+		Headers:    resp.Header,
+		Body:       responseBody,
+	}, nil
+}
+
+// 将请求信息存储到pebbleDB
+func storeRequestInfo(ga *GatewayApp, requestInfo RequestInfo) error {
+	timestamp := time.Now().UnixNano()
+	requestKey := fmt.Sprintf("request_%d_%s_%s", timestamp, requestInfo.Method, requestInfo.URL)
+	requestData, _ := json.Marshal(requestInfo)
+	return ga.storeAPIInfoInPebble(requestKey, string(requestData))
+}
+
+// 将响应信息存储到pebbleDB
+func storeResponseInfo(ga *GatewayApp, responseInfo ResponseInfo) error {
+	timestamp := time.Now().UnixNano()
+	responseKey := fmt.Sprintf("response_%d_%s_%d", timestamp, responseInfo.Method, responseInfo.StatusCode)
+	responseData, _ := json.Marshal(responseInfo)
+	return ga.storeAPIInfoInPebble(responseKey, string(responseData))
 }

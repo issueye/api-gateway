@@ -49,13 +49,17 @@ func (bs *BaseService[T]) GetById(ctx context.Context, model T) error {
 }
 
 // GetByCondition根据给定条件获取单个记录
-func (bs *BaseService[T]) GetByCondition(ctx context.Context, model T, condition Condition) error {
-	return condition(bs.DB.WithContext(ctx)).First(model).Error
+func (bs *BaseService[T]) GetByCondition(ctx context.Context, condition Condition) (T, error) {
+	var model T
+	err := condition(bs.DB.WithContext(ctx)).First(model).Error
+	return model, err
 }
 
 // GetAllByCondition根据给定条件获取所有匹配的记录
-func (bs *BaseService[T]) GetAllByCondition(ctx context.Context, models []T, condition Condition) error {
-	return condition(bs.DB.WithContext(ctx)).Find(models).Error
+func (bs *BaseService[T]) GetAllByCondition(ctx context.Context, condition Condition) ([]T, error) {
+	list := make([]T, 0)
+	err := condition(bs.DB.WithContext(ctx)).Find(&list).Error
+	return list, err
 }
 
 // Create添加单个记录
@@ -84,6 +88,7 @@ func (bs *BaseService[T]) DeleteById(ctx context.Context, model T) error {
 }
 
 // DeleteByCondition根据条件删除记录
-func (bs *BaseService[T]) DeleteByCondition(ctx context.Context, model T, condition Condition) error {
+func (bs *BaseService[T]) DeleteByCondition(ctx context.Context, condition Condition) error {
+	var model T
 	return condition(bs.DB.WithContext(ctx)).Delete(model).Error
 }

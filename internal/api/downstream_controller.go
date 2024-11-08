@@ -10,19 +10,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type APIController struct {
-	service services.APIServiceImpl
+type DownstreamController struct {
+	service services.DownstreamServiceImpl
 }
 
-func NewAPIController(service services.APIServiceImpl) *APIController {
-	return &APIController{
+func NewDownstreamController(service services.DownstreamServiceImpl) *DownstreamController {
+	return &DownstreamController{
 		service: service,
 	}
 }
 
 // 创建API信息
-func (ac *APIController) Create(c *gin.Context) {
-	var api model.APIInfo
+func (ac *DownstreamController) Create(c *gin.Context) {
+	var api model.Downstream
 	if err := c.ShouldBindJSON(&api); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -36,7 +36,7 @@ func (ac *APIController) Create(c *gin.Context) {
 }
 
 // 获取所有API信息
-func (ac *APIController) List(c *gin.Context) {
+func (ac *DownstreamController) List(c *gin.Context) {
 	result, err := ac.service.GetAll(context.Background())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err})
@@ -46,7 +46,7 @@ func (ac *APIController) List(c *gin.Context) {
 }
 
 // 根据名称获取API信息
-func (ac *APIController) GetByName(c *gin.Context) {
+func (ac *DownstreamController) GetByName(c *gin.Context) {
 	name := c.Param("name")
 	api, err := ac.service.GetByName(context.Background(), name)
 	if err != nil {
@@ -57,24 +57,24 @@ func (ac *APIController) GetByName(c *gin.Context) {
 }
 
 // 更新API信息
-func (ac *APIController) Update(c *gin.Context) {
+func (ac *DownstreamController) Update(c *gin.Context) {
 	name := c.Param("name")
-	var updatedAPI model.APIInfo
-	if err := c.ShouldBindJSON(&updatedAPI); err != nil {
+	var data model.Downstream
+	if err := c.ShouldBindJSON(&data); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	err := ac.service.UpdateByName(context.Background(), updatedAPI, name)
+	err := ac.service.UpdateByName(context.Background(), data, name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, updatedAPI)
+	c.JSON(http.StatusOK, data)
 }
 
 // 删除API信息
-func (ac *APIController) Delete(c *gin.Context) {
+func (ac *DownstreamController) Delete(c *gin.Context) {
 	name := c.Param("name")
 	err := ac.service.DeleteByName(context.Background(), name)
 	if err != nil {

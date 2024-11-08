@@ -4,17 +4,16 @@ import (
 	"fmt"
 
 	"api-gateway/internal/api"
-	"api-gateway/internal/global"
 	"api-gateway/internal/services"
-	"api-gateway/pkg/db"
 
 	"github.com/gin-gonic/gin"
 )
 
 // ManagementApp结构体用于管理相关的初始化和配置
 type ManagementApp struct {
-	Router *gin.Engine
-	API    *api.APIController
+	Router     *gin.Engine
+	API        *api.APIController
+	DOWNStream *api.DownstreamController
 }
 
 // NewManagementApp创建并初始化用于管理的应用实例
@@ -24,16 +23,8 @@ func NewManagementApp() *ManagementApp {
 
 // Initialize初始化管理应用的各种组件
 func (ma *ManagementApp) Initialize() {
-	var err error
-	global.DB, err = db.NewDB()
-	if err != nil {
-		fmt.Printf("Error initializing database: %v", err)
-		return
-	}
-
 	apiService := services.NewAPIService()
 	ma.API = api.NewAPIController(apiService)
-
 	ma.Router = gin.Default()
 }
 
@@ -41,11 +32,19 @@ func (ma *ManagementApp) Initialize() {
 func (ma *ManagementApp) SetupRoutes() {
 	apiRoutes := ma.Router.Group("/api")
 	{
-		apiRoutes.POST("", ma.API.CreateAPI)
-		apiRoutes.GET("", ma.API.GetAPIs)
-		apiRoutes.GET("/:name", ma.API.GetAPI)
-		apiRoutes.PUT("/:name", ma.API.UpdateAPI)
-		apiRoutes.DELETE("/:name", ma.API.DeleteAPI)
+		apiRoutes.POST("", ma.API.Create)
+		apiRoutes.GET("", ma.API.List)
+		apiRoutes.GET("/:name", ma.API.GetByName)
+		apiRoutes.PUT("/:name", ma.API.Update)
+		apiRoutes.DELETE("/:name", ma.API.Delete)
+	}
+	dsRoutes := ma.Router.Group("/downstream")
+	{
+		dsRoutes.POST("", ma.DOWNStream.Create)
+		dsRoutes.GET("", ma.DOWNStream.List)
+		dsRoutes.GET("/:name", ma.DOWNStream.GetByName)
+		dsRoutes.PUT("/:name", ma.DOWNStream.Update)
+		dsRoutes.DELETE("/:name", ma.DOWNStream.Delete)
 	}
 }
 
