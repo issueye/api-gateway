@@ -11,9 +11,10 @@ import (
 
 // ManagementApp结构体用于管理相关的初始化和配置
 type ManagementApp struct {
-	Router     *gin.Engine
-	API        *api.APIController
-	DOWNStream *api.DownstreamController
+	Router       *gin.Engine
+	VersionGroup *gin.RouterGroup
+	API          *api.APIController
+	DOWNStream   *api.DownstreamController
 }
 
 // NewManagementApp创建并初始化用于管理的应用实例
@@ -29,11 +30,12 @@ func (ma *ManagementApp) Initialize() {
 	dsService := services.NewDownstreamService()
 	ma.DOWNStream = api.NewDownstreamController(dsService)
 	ma.Router = gin.Default()
+	ma.VersionGroup = ma.Router.Group("api/v1")
 }
 
 // SetupRoutes设置管理应用的路由
 func (ma *ManagementApp) SetupRoutes() {
-	apiRoutes := ma.Router.Group("/api")
+	apiRoutes := ma.VersionGroup.Group("apis")
 	{
 		apiRoutes.POST("", ma.API.Create)
 		apiRoutes.GET("", ma.API.List)
@@ -41,7 +43,7 @@ func (ma *ManagementApp) SetupRoutes() {
 		apiRoutes.PUT("/:name", ma.API.Update)
 		apiRoutes.DELETE("/:name", ma.API.Delete)
 	}
-	dsRoutes := ma.Router.Group("/downstream")
+	dsRoutes := ma.VersionGroup.Group("/downstream")
 	{
 		dsRoutes.POST("", ma.DOWNStream.Create)
 		dsRoutes.GET("", ma.DOWNStream.List)
